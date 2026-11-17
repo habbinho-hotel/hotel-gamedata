@@ -1,0 +1,38 @@
+{
+  "// Hotel UI Texts Configuration": "",
+  "loader": "Opstarten...",
+  "loader.waiting": "Loading content...",
+  "generic.reconnecting": "Connecting to server...",
+  "loading.task.assets": "Loading game assets...",
+  "loading.task.localization": "Loading translations...",
+  "loading.task.avatar": "Loading wardrobe...",
+  "loading.task.sounds": "Loading sounds...",
+  "loading.task.renderer": "Initializing renderer...",
+  "loading.task.session": "Verifying session...",
+  "loading.task.startsession": "Starting session...",
+  "loading.task.userdata": "Loading user data...",
+  "loading.task.rooms": "Loading rooms...",
+  "onboarding.button.ready": "Ready!",
+  "client.starting.revolving": "",
+  "client.loading.failed": "Loading failed",
+  "loginview": {
+      "images": {
+          "background": "${asset.url}/c_images/reception/stretch_blue.png",
+          "background.colour": "#6eadc8",
+          "sun": "${asset.url}/c_images/reception/sun.png",
+          "drape": "${asset.url}/c_images/reception/drape.png",
+          "left": "${asset.url}/c_images/reception/ts.png",
+          "right": "${asset.url}/c_images/reception/US_right.png",
+          "right.repeat": "${asset.url}/c_images/reception/US_top_right.png"
+      }
+  },
+  "login_background.colour": "#6eadc8",
+  "login_background": "",
+  "login_sun": "",
+  "login_drape": "",
+  "login_left": "",
+  "login_right.repeat": "",
+  "login_right": "",
+  "login.remember.rotate.interval.minutes": 15,
+  "login.remember.cookie": false
+}
