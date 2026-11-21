@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""Package staged game data for a Habbinho release."""
+
+import argparse
+import gzip
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import tarfile
+import tempfile
+
+
+ARTIFACT = "gamedata.tar.gz"
+ASSET_DIRECTORIES = {
+    "badgeparts", "bundled", "c_images", "clothes", "config", "effect",
+    "furniture", "habbopages", "icons", "images", "licenses", "news",
+    "pets", "room", "sounds",
+}
+REQUIRED_CONFIG = (
+    "EffectMap.json",
+    "ExternalTexts.json",
+    "FigureData.json",
+    "FigureMap.json",
+    "FurnitureData.json",
+    "HabboAvatarActions.json",
+    "ProductData.json",
+    "UITexts.jsonc",
+)
+QUOTED_STRING = r'"(?:\\[\s\S]|[^"\\])*"'
+JSONC_COMMENTS = re.compile(QUOTED_STRING + r"|//[^\r\n]*|/\*[\s\S]*?\*/")
+JSONC_TRAILING_COMMAS = re.compile(QUOTED_STRING + r"|,(?=\s*[}\]])")
+
+
+def raise_error(error):
+    raise error
+
+
+def collect_entries(source):
+    entries = {}
+    for root, directories, files in os.walk(source, onerror=raise_error):
+        for name in directories + files:
+            path = Path(root) / name
+            relative = path.relative_to(source)
+            archive_name = relative.as_posix()
+            details = path.lstat()
+            if name.startswith(".") or "\\" in name or any(ord(char) < 32 for char in name):
+                raise ValueError(f"caminho impróprio para publicação: {archive_name!r}")
+            if stat.S_ISLNK(details.st_mode) or (stat.S_ISREG(details.st_mode) and details.st_nlink > 1):
+                raise ValueError(f"links não são aceitos; prepare uma cópia de {archive_name}")
+            if not (stat.S_ISDIR(details.st_mode) or stat.S_ISREG(details.st_mode)):
+                raise ValueError(f"somente arquivos regulares e pastas são aceitos: {archive_name}")
+            if relative.parts[0] not in ASSET_DIRECTORIES or (len(relative.parts) == 1 and not path.is_dir()):
+                raise ValueError(f"entrada fora das pastas de assets: {archive_name}")
+            entries[archive_name] = details
+    return entries
+
+
+def validate_config(source, entries):
+    for name in REQUIRED_CONFIG:
+        archive_name = f"config/{name}"
+        details = entries.get(archive_name)
+        if not details or not stat.S_ISREG(details.st_mode):
+            raise ValueError(f"configuração obrigatória ausente: {archive_name}")
+        try:
+            contents = (source / archive_name).read_text(encoding="utf-8")
+            if name.endswith(".jsonc"):
+                contents = JSONC_COMMENTS.sub(
+                    lambda match: match[0] if match[0].startswith('"') else " ", contents
+                )
+                contents = JSONC_TRAILING_COMMAS.sub(
+                    lambda match: match[0] if match[0].startswith('"') else "", contents
+                )
+            data = json.loads(contents, parse_constant=reject_json_constant)
+            if not isinstance(data, dict):
+                raise ValueError("esperado um objeto JSON")
+        except ValueError as error:
+            raise ValueError(f"{archive_name}: {error}") from error
+
+
+def reject_json_constant(value):
+    raise ValueError(f"constante inválida em JSON: {value}")
+
+
+def write_archive(source, entries, destination):
+    with destination.open("wb") as output:
+        with gzip.GzipFile(filename="", fileobj=output, mode="wb", mtime=0) as compressed:
+            with tarfile.open(fileobj=compressed, mode="w|", format=tarfile.PAX_FORMAT) as archive:
+                for name, details in sorted(entries.items()):
+                    info = tarfile.TarInfo(name)
+                    if stat.S_ISDIR(details.st_mode):
+                        info.type = tarfile.DIRTYPE
+                        info.mode = 0o755
+                        archive.addfile(info)
+                    else:
+                        info.mode = 0o644
+                        info.size = details.st_size
+                        with (source / name).open("rb") as payload:
+                            archive.addfile(info, payload)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--reviewed", action="store_true", required=True,
+                        help="confirma revisão de procedência e autorização de todos os arquivos")
+    parser.add_argument("source", type=Path, help="pasta preparada de assets autorizados")
+    parser.add_argument("output", type=Path, help="nova pasta para o arquivo e seu SHA-256")
+    args = parser.parse_args()
+    try:
+        if args.source.is_symlink() or args.output.is_symlink():
+            raise ValueError("entrada e saída devem apontar diretamente para pastas")
+        source, output = args.source.resolve(), args.output.resolve()
+        repository = Path(__file__).resolve().parents[1]
+        if not source.is_dir() or source == repository or os.path.lexists(source / ".git"):
+            raise ValueError("prepare uma pasta de entrada própria, separada da raiz do checkout")
+        if output.exists() or output.is_relative_to(source):
+            raise ValueError("escolha uma pasta de saída nova e fora da entrada")
+        entries = collect_entries(source)
+        validate_config(source, entries)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".gamedata-", dir=output.parent) as work:
+            staged = Path(work) / "release"
+            staged.mkdir()
+            artifact = staged / ARTIFACT
+            write_archive(source, entries, artifact)
+            if artifact.stat().st_size >= 2 * 1024**3:
+                raise ValueError("o arquivo precisa ter menos de 2 GiB para GitHub Releases")
+            sha256 = hashlib.sha256()
+            with artifact.open("rb") as archive:
+                for chunk in iter(lambda: archive.read(1024 * 1024), b""):
+                    sha256.update(chunk)
+            checksum = sha256.hexdigest()
+            (staged / f"{ARTIFACT}.sha256").write_text(f"{checksum}  {ARTIFACT}\n", encoding="ascii")
+            staged.rename(output)
+    except (OSError, ValueError, tarfile.TarError) as error:
+        parser.exit(1, f"pack: {error}\n")
+    print(f"{checksum}  {output / ARTIFACT}")
+
+
+if __name__ == "__main__":
+    main()
